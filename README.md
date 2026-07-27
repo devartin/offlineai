@@ -20,9 +20,14 @@ npm install && npm run verify
 
 ## Install
 
-**Android** — grab the APK from [Releases](../../releases) and sideload it. You'll need to allow installation from unknown sources. The APK is signed with a debug keystore, which is fine for sideloading but means it can't go on Google Play.
+**Android** — grab `app-release.apk` from [Releases](../../releases) and sideload it. You'll need to allow installation from unknown sources. The APK is signed with a debug keystore, which is fine for sideloading but means it can't go on Google Play.
 
-**iOS** — no downloadable build. An installable IPA requires a paid Apple Developer account to sign it; there's no way around that. Build it yourself with `npx eas build --platform ios --profile development` (needs an Expo account), or run it from Xcode after `npx expo prebuild --platform ios`.
+**iOS** — there is no tap-to-install build, and there cannot be one: Apple requires a paid Developer account to sign an app for distribution, and this project holds no Apple credentials. Two ways in, both using your own free Apple ID:
+
+1. **With a Mac and Xcode** — the easy path. Clone, `npm install`, then `npx expo run:ios --device`. Xcode's free provisioning signs it against your Apple ID automatically.
+2. **Without Xcode** — download `OfflineAI-unsigned.ipa` from [Releases](../../releases) and sign it yourself with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io). You'll need a computer for the initial install.
+
+Either way the app is signed with a *free* Apple ID, so iOS expires it after **seven days** and it has to be re-signed. That is Apple's limit on free provisioning, not a property of this app. AltStore refreshes automatically while it can reach your computer.
 
 **From source, either platform:**
 
@@ -104,7 +109,7 @@ npm run build:android
 
 That produces a sideloadable APK. Build the dev client once, then iterate on JS with hot reload — native rebuilds are only needed when native dependencies change.
 
-iOS builds the same way, but installing on a physical iPhone requires a paid Apple Developer account for provisioning. There is no free path without Xcode.
+For iOS, `npx expo run:ios --device` builds and installs in one step using Xcode's free provisioning — no paid account, but the resulting app expires after seven days. CI also produces an unsigned IPA (`.github/workflows/ios.yml`) for people who want to sideload without Xcode; it is built with `CODE_SIGNING_ALLOWED=NO` and carries no signing material at all, so it must be signed by whoever installs it.
 
 ---
 

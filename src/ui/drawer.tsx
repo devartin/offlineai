@@ -17,13 +17,14 @@
 
 import type { DrawerContentComponentProps } from 'expo-router/drawer';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app-state';
 import type { Conversation } from '../db';
 import * as haptics from './haptics';
 import { Icon, type IconName } from './icon';
-import { Divider, Skeleton, Text } from './primitives';
+import { Button, Divider, Skeleton, Text } from './primitives';
+import { ActionSheet, Sheet } from './sheet';
 import { useTheme } from './theme';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -66,6 +67,11 @@ export function AppDrawer({ navigation, state }: DrawerContentComponentProps) {
 
   const [conversations, setConversations] = useState<Conversation[] | null>(null);
   const [query, setQuery] = useState('');
+  /** The conversation whose long-press menu is open. */
+  const [menuFor, setMenuFor] = useState<Conversation | null>(null);
+  /** The conversation being renamed, and the title being typed for it. */
+  const [renaming, setRenaming] = useState<Conversation | null>(null);
+  const [titleDraft, setTitleDraft] = useState('');
 
   const activeRoute = state.routes[state.index]?.name;
 
@@ -125,6 +131,62 @@ export function AppDrawer({ navigation, state }: DrawerContentComponentProps) {
       navigation.navigate(route);
     },
     [navigation],
+  );
+
+  const commitRename = useCallback(() => {
+    const conversation = renaming;
+    const title = titleDraft.trim();
+    setRenaming(null);
+    if (!conversation || !repos || title.length === 0 || title === conversation.title) {
+      return;
+    }
+
+    haptics.success();
+    // Applied locally first. The write is durable, but waiting on a round trip
+    // to SQLite before the row updates makes a rename feel laggy for no reason.
+    setConversations(
+      (previous) =>
+        previous?.map((candidate) =>
+          candidate.id === conversation.id ? { ...candidate, title } : candidate,
+        ) ?? null,
+    );
+    void repos.conversations.rename(conversation.id, title, Date.now()).catch(reload);
+  }, [renaming, titleDraft, repos, reload]);
+
+  /**
+   * Deletes a conversation, after asking.
+   *
+   * Confirmed rather than undoable: an undo needs somewhere to hold the deleted
+   * rows, and holding data the user has asked to destroy is precisely the thing
+   * this app exists not to do.
+   */
+  const confirmDelete = useCallback(
+    (conversation: Conversation) => {
+      Alert.alert(
+        'Delete conversation?',
+        `“${conversation.title}” and every message in it will be removed from this device. This cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              haptics.warning();
+              setConversations(
+                (previous) =>
+                  previous?.filter((candidate) => candidate.id !== conversation.id) ??
+                  null,
+              );
+              void repos?.conversations.remove(conversation.id).catch(reload);
+              // The chat screen may be showing the conversation that just went
+              // away, so it is reset rather than left displaying a ghost.
+              navigation.navigate('index', { fresh: String(Date.now()) });
+            },
+          },
+        ],
+      );
+    },
+    [repos, reload, navigation],
   );
 
   return (
@@ -213,6 +275,10 @@ export function AppDrawer({ navigation, state }: DrawerContentComponentProps) {
                   key={conversation.id}
                   label={conversation.title}
                   onPress={() => openChat(conversation.id)}
+                  onLongPress={() => {
+                    haptics.press();
+                    setMenuFor(conversation);
+                  }}
                 />
               ))}
             </View>
@@ -237,6 +303,61 @@ export function AppDrawer({ navigation, state }: DrawerContentComponentProps) {
           onPress={() => goTo('settings')}
         />
       </View>
+
+      <ActionSheet
+        visible={menuFor !== null}
+        onClose={() => setMenuFor(null)}
+        title={menuFor?.title}
+        actions={[
+          {
+            icon: 'newChat',
+            label: 'Rename',
+            onPress: () => {
+              if (!menuFor) return;
+              setTitleDraft(menuFor.title);
+              setRenaming(menuFor);
+            },
+          },
+          {
+            icon: 'trash',
+            label: 'Delete',
+            destructive: true,
+            onPress: () => {
+              if (menuFor) confirmDelete(menuFor);
+            },
+          },
+        ]}
+      />
+
+      <Sheet
+        visible={renaming !== null}
+        onClose={() => setRenaming(null)}
+        title="Rename conversation"
+      >
+        <View style={{ padding: theme.space[5], gap: theme.space[4] }}>
+          <TextInput
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            autoFocus
+            selectTextOnFocus
+            returnKeyType="done"
+            onSubmitEditing={commitRename}
+            accessibilityLabel="Conversation title"
+            maxLength={80}
+            style={[
+              theme.typography.callout,
+              {
+                color: theme.color.text,
+                backgroundColor: theme.color.surfaceRaised,
+                borderRadius: theme.radius.md,
+                paddingHorizontal: theme.space[4],
+                paddingVertical: theme.space[3],
+              },
+            ]}
+          />
+          <Button label="Save" onPress={commitRename} disabled={!titleDraft.trim()} />
+        </View>
+      </Sheet>
     </View>
   );
 }
@@ -245,12 +366,14 @@ function DrawerRow({
   icon,
   label,
   onPress,
+  onLongPress,
   active = false,
   emphasis = false,
 }: {
   icon?: IconName;
   label: string;
   onPress: () => void;
+  onLongPress?: () => void;
   active?: boolean;
   emphasis?: boolean;
 }) {
@@ -261,8 +384,11 @@ function DrawerRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={onLongPress ? 'Long press to rename or delete' : undefined}
       accessibilityState={{ selected: active }}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={280}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
       style={{

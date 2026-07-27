@@ -127,6 +127,17 @@ export const MIGRATIONS: readonly string[] = [
     installed_at INTEGER NOT NULL
   );
   `,
+
+  // 5 — how long the model spent reasoning
+  //
+  // Additive and nullable, so every row written before this migration stays
+  // valid and simply reports an unknown duration. The transcript shows
+  // "Thought for 12 seconds" on a settled reasoning trace, which is not
+  // recoverable after the fact — the trace records what was thought, never how
+  // long it took — so it has to be measured during the turn and stored.
+  `
+  ALTER TABLE messages ADD COLUMN reasoning_ms INTEGER;
+  `,
 ];
 
 /**
@@ -208,6 +219,8 @@ export interface Message {
   role: MessageRole;
   content: string;
   reasoning: string | null;
+  /** Time spent reasoning. Null on messages written before this was recorded. */
+  reasoningMs: number | null;
   toolCalls: StoredToolCall[] | null;
   toolCallId: string | null;
   createdAt: number;
@@ -271,6 +284,7 @@ interface MessageRow {
   role: MessageRole;
   content: string;
   reasoning: string | null;
+  reasoning_ms: number | null;
   tool_calls: string | null;
   tool_call_id: string | null;
   created_at: number;
@@ -331,6 +345,7 @@ function toMessage(row: MessageRow): Message {
     role: row.role,
     content: row.content,
     reasoning: row.reasoning,
+    reasoningMs: row.reasoning_ms,
     toolCalls: parseToolCalls(row.tool_calls),
     toolCallId: row.tool_call_id,
     createdAt: row.created_at,
@@ -534,14 +549,16 @@ export function createRepositories(db: SqlDatabase): Repositories {
     async append(message) {
       await db.runAsync(
         `INSERT INTO messages
-           (id, conversation_id, role, content, reasoning, tool_calls, tool_call_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, conversation_id, role, content, reasoning, reasoning_ms,
+            tool_calls, tool_call_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.conversationId,
           message.role,
           message.content,
           message.reasoning,
+          message.reasoningMs,
           message.toolCalls ? JSON.stringify(message.toolCalls) : null,
           message.toolCallId,
           message.createdAt,

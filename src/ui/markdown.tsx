@@ -12,7 +12,7 @@
  */
 
 import * as Clipboard from 'expo-clipboard';
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as haptics from './haptics';
 import { Icon } from './icon';
@@ -67,7 +67,14 @@ function Spans({ spans, color }: { spans: Span[]; color: string }) {
  * unreadable, and carrying a copy button because code the user cannot get out
  * of the app is close to useless on a phone.
  */
-function CodeBlock({ block }: { block: Extract<Block, { kind: 'code' }> }) {
+function CodeBlock({
+  block,
+  trailing,
+}: {
+  block: Extract<Block, { kind: 'code' }>;
+  /** The streaming caret, when this is the block still being written. */
+  trailing?: ReactNode;
+}) {
   const theme = useTheme();
   const [copied, setCopied] = useState(false);
 
@@ -130,6 +137,7 @@ function CodeBlock({ block }: { block: Extract<Block, { kind: 'code' }> }) {
       >
         <Text selectable style={[theme.typography.mono, { color: theme.color.codeText }]}>
           {block.text}
+          {trailing}
         </Text>
       </ScrollView>
     </View>
@@ -191,6 +199,47 @@ function TableBlock({ block }: { block: Extract<Block, { kind: 'table' }> }) {
 }
 
 // ---------------------------------------------------------------------------
+// The streaming caret
+// ---------------------------------------------------------------------------
+
+/** Blink period, in milliseconds. Matches a typical terminal cursor. */
+const BLINK_MS = 530;
+
+/**
+ * The block that sits at the end of text still being written.
+ *
+ * Worth the trouble because it answers a question the user is actually asking
+ * during a pause: has the model stopped, or is it thinking? Text alone cannot
+ * distinguish "finished" from "stalled mid-sentence", and on a phone running a
+ * 4B model at three tokens a second, pauses are ordinary.
+ *
+ * The blink is driven by swapping the character rather than by animating
+ * opacity. This renders as a nested inline span so it sits on the baseline
+ * after the final word, and nested text is flattened into a single attributed
+ * string natively — an animated opacity on that nesting level does not
+ * reliably survive the flattening, whereas changing the character always does.
+ * The cost is one `setState` on one leaf component roughly twice a second.
+ */
+function Caret({ color }: { color: string }) {
+  const [on, setOn] = useState(true);
+
+  useEffect(() => {
+    const timer = setInterval(() => setOn((value) => !value), BLINK_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <Text
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={{ color: on ? color : 'transparent' }}
+    >
+      {' ▍'}
+    </Text>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Markdown
 // ---------------------------------------------------------------------------
 
@@ -198,6 +247,11 @@ export interface MarkdownProps {
   source: string;
   /** Body text colour. Defaults to the theme's primary text. */
   color?: string;
+  /**
+   * Draws a blinking caret after the final block. Set while the message is
+   * still streaming and cleared the moment it settles.
+   */
+  caret?: boolean;
 }
 
 /**
@@ -207,7 +261,7 @@ export interface MarkdownProps {
  * flush, and a long transcript would otherwise re-parse every prior message
  * sixteen times a second while the newest one streams.
  */
-export const Markdown = memo(function Markdown({ source, color }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ source, color, caret }: MarkdownProps) {
   const theme = useTheme();
   const bodyColor = color ?? theme.color.text;
   const blocks = parseMarkdown(source);
@@ -217,6 +271,19 @@ export const Markdown = memo(function Markdown({ source, color }: MarkdownProps)
     2: theme.typography.headline,
     3: theme.typography.subhead,
   } as const;
+
+  /**
+   * The caret, for the final block only.
+   *
+   * Returned as a node to nest rather than rendered as a sibling, so it lands
+   * on the baseline after the last word instead of on a line of its own.
+   * `rule` and `table` are excluded: neither has a text baseline to sit on, and
+   * a caret after a horizontal rule reads as a rendering fault.
+   */
+  const trailing = (index: number, kind: Block['kind']) =>
+    caret && index === blocks.length - 1 && kind !== 'rule' && kind !== 'table' ? (
+      <Caret color={theme.color.textTertiary} />
+    ) : null;
 
   return (
     <View style={{ gap: theme.space[3] }}>
@@ -233,11 +300,14 @@ export const Markdown = memo(function Markdown({ source, color }: MarkdownProps)
                 ]}
               >
                 <Spans spans={block.spans} color={bodyColor} />
+                {trailing(index, block.kind)}
               </Text>
             );
 
           case 'code':
-            return <CodeBlock key={index} block={block} />;
+            return (
+              <CodeBlock key={index} block={block} trailing={trailing(index, block.kind)} />
+            );
 
           case 'table':
             return <TableBlock key={index} block={block} />;
@@ -265,6 +335,7 @@ export const Markdown = memo(function Markdown({ source, color }: MarkdownProps)
               >
                 <Text selectable style={theme.typography.body}>
                   <Spans spans={block.spans} color={theme.color.textSecondary} />
+                  {trailing(index, block.kind)}
                 </Text>
               </View>
             );
@@ -296,6 +367,9 @@ export const Markdown = memo(function Markdown({ source, color }: MarkdownProps)
                     </Text>
                     <Text selectable style={[theme.typography.body, styles.flexText]}>
                       <Spans spans={item.spans} color={bodyColor} />
+                      {itemIndex === block.items.length - 1
+                        ? trailing(index, block.kind)
+                        : null}
                     </Text>
                   </View>
                 ))}
@@ -307,6 +381,7 @@ export const Markdown = memo(function Markdown({ source, color }: MarkdownProps)
             return (
               <Text key={index} selectable style={theme.typography.body}>
                 <Spans spans={block.spans} color={bodyColor} />
+                {trailing(index, block.kind)}
               </Text>
             );
         }

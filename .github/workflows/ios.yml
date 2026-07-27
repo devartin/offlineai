@@ -1,0 +1,107 @@
+# Builds an *unsigned* iOS .ipa and attaches it to the matching release.
+#
+# Why unsigned: a signed, tap-to-install iOS build requires a paid Apple
+# Developer account, and this project deliberately holds no Apple credentials —
+# the same reason the Android APK is built here rather than through EAS. So the
+# artifact is produced with no signing material whatsoever, and whoever installs
+# it signs it themselves with their own free Apple ID, using AltStore or
+# Sideloadly. That is the only path from this repository onto an iPhone that
+# does not involve someone handing over their developer account.
+#
+# The IPA is assembled by hand rather than with `xcodebuild -exportArchive`,
+# because export insists on an export-options plist naming a signing identity —
+# which is exactly the thing that does not exist here. An .ipa is only a zip
+# containing `Payload/<App>.app`, so the archive's product is repackaged
+# directly.
+#
+# Free-provisioning caveat, stated plainly in the release notes: apps signed
+# with a free Apple ID expire after seven days and must be re-signed. Anyone
+# with Xcode is better served by `npx expo run:ios --device`, which does the
+# same thing without the round trip.
+name: iOS IPA (unsigned)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macOS minutes bill at a 10x multiplier, which would matter on a private
+    # repository. This one is public, so Actions minutes are free.
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Verify before spending an hour compiling llama.cpp for arm64.
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Generate the native project
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Install pods
+        working-directory: ios
+        run: pod install
+
+      # The workspace and scheme are named after `expo.name` in app.json.
+      # Detected rather than hardcoded so renaming the app cannot silently
+      # break this at tag time, which is the worst possible moment to find out.
+      - name: Resolve the workspace and scheme
+        id: xcode
+        run: |
+          workspace=$(ls -d ios/*.xcworkspace | head -1)
+          scheme=$(basename "$workspace" .xcworkspace)
+          echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
+          echo "scheme=$scheme" >> "$GITHUB_OUTPUT"
+          echo "Building scheme '$scheme' from $workspace"
+
+      - name: Archive without signing
+        run: |
+          xcodebuild archive \
+            -workspace "${{ steps.xcode.outputs.workspace }}" \
+            -scheme "${{ steps.xcode.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/OfflineAI.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Repackage the archive as an .ipa
+        id: ipa
+        run: |
+          app=$(ls -d "$RUNNER_TEMP/OfflineAI.xcarchive/Products/Applications/"*.app | head -1)
+          staging="$RUNNER_TEMP/ipa"
+          mkdir -p "$staging/Payload"
+          cp -R "$app" "$staging/Payload/"
+          (cd "$staging" && zip -qry OfflineAI-unsigned.ipa Payload)
+          echo "path=$staging/OfflineAI-unsigned.ipa" >> "$GITHUB_OUTPUT"
+          ls -lh "$staging/OfflineAI-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offlineai-ios-unsigned-ipa
+          path: ${{ steps.ipa.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.ipa.outputs.path }}
+          fail_on_unmatched_files: true

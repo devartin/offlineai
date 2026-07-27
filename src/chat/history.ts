@@ -34,6 +34,14 @@ export interface Bubble {
   role: 'user' | 'assistant';
   content: string;
   reasoning: string | null;
+  /**
+   * How long the reasoning took, in milliseconds.
+   *
+   * Measured during the turn because it cannot be recovered afterwards — the
+   * trace records what was thought, never how long it took — and rendered as
+   * "Thought for 12 seconds" on the collapsed panel.
+   */
+  reasoningMs: number | null;
   toolRuns: ToolRun[];
   streaming: boolean;
 }
@@ -74,6 +82,7 @@ export function bubblesFromMessages(messages: Message[]): Bubble[] {
         role: message.role as 'user' | 'assistant',
         content: message.content,
         reasoning: message.reasoning,
+        reasoningMs: message.reasoningMs,
         toolRuns: toolRunsFrom(message),
         streaming: false,
       }))
@@ -136,6 +145,7 @@ export async function persistUserTurn(
       role: 'user',
       content: prompt,
       reasoning: null,
+      reasoningMs: null,
       toolCalls: null,
       toolCallId: null,
       createdAt: now,
@@ -164,6 +174,7 @@ export async function persistAssistantTurn(
       role: 'assistant',
       content: bubble.content,
       reasoning: bubble.reasoning,
+      reasoningMs: bubble.reasoningMs,
       toolCalls:
         bubble.toolRuns.length > 0
           ? bubble.toolRuns.map((run, index) => ({
@@ -184,10 +195,12 @@ export async function persistAssistantTurn(
 /**
  * Removes a message and everything after it.
  *
- * The regenerate path: the rejected answer must leave storage as well as the
- * screen, or reopening the conversation would resurrect it.
+ * Two callers, and both need the same guarantee — that what leaves the screen
+ * also leaves storage, or reopening the conversation resurrects it. Regenerate
+ * drops the rejected answer; editing a question drops the question and every
+ * reply that was conditioned on it.
  */
-export async function dropAssistantFrom(
+export async function dropFrom(
   repos: Repositories | null,
   conversationId: string | null,
   messageId: string,

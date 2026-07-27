@@ -25,7 +25,7 @@
  */
 
 import { Modal, ScrollView, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app-state';
 import type { PromptAnswer } from '../tools/kernel/consent';
@@ -95,7 +95,10 @@ export function ConsentSheet() {
       onRequestClose={() => answer('deny')}
     >
       <Animated.View entering={FadeIn.duration(theme.motion.fast)} style={styles.scrim}>
-        <Animated.View entering={FadeInUp.duration(theme.motion.normal).springify()}>
+        {/* `FadeInDown` starts 25pt below its resting place and rises — these
+            names describe the direction of travel. `FadeInUp` would drop the
+            sheet in from above, which is an alert's motion, not a sheet's. */}
+        <Animated.View entering={FadeInDown.duration(theme.motion.normal).springify()}>
           <Surface
             variant="raised"
             radius="xxl"

@@ -1,7 +1,7 @@
 {
   "name": "offlineai",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "Apache-2.0",
   "dependencies": {
     "@expo/ui": "~57.0.7",
@@ -11,6 +11,7 @@
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.7",
     "expo-device": "~57.0.1",
+    "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.1",
     "expo-font": "~57.0.1",
     "expo-glass-effect": "~57.0.1",
