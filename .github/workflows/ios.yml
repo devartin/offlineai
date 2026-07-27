@@ -32,11 +32,29 @@ jobs:
   build:
     # macOS minutes bill at a 10x multiplier, which would matter on a private
     # repository. This one is public, so Actions minutes are free.
-    runs-on: macos-15
+    #
+    # macos-26 rather than macos-15, and not arbitrarily: Expo SDK 57 resolves a
+    # Swift package declaring tools version 6.2, which Xcode 16 on macos-15
+    # cannot read — it fails at dependency resolution with "package 'apple' is
+    # using Swift tools version 6.2.0 but the installed version is 6.1.0",
+    # before compiling a single file. Xcode 26 is also the correct toolchain for
+    # an app that uses expo-glass-effect against iOS 26 anyway.
+    runs-on: macos-26
     timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
+
+      # Pinned explicitly rather than trusting the image default, so a runner
+      # image update cannot silently move the toolchain under a release build.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Record the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       - uses: actions/setup-node@v4
         with:
