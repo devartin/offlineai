@@ -30,8 +30,11 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# env files — every form, not just *.local. A public repo gets exactly one
+# chance to not leak these.
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -41,3 +44,9 @@ example
 # generated native folders
 /ios
 /android
+
+# build outputs
+*.apk
+*.aab
+*.ipa
+*.app.zip

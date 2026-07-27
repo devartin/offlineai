@@ -1,0 +1,31 @@
+# Typecheck and test on every push and pull request.
+#
+# Cheap and fast — the whole suite runs in well under a second, because every
+# testable module is deliberately free of native dependencies. That includes the
+# offline-guarantee test, which statically walks `src/` and fails the build if
+# any subsystem outside the two download modules acquires a network import.
+# That check is the one that most needs to run on someone else's machine rather
+# than only on the maintainer's.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

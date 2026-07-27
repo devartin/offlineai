@@ -1,0 +1,84 @@
+# Builds an installable Android APK and attaches it to the matching release.
+#
+# This exists because both alternatives need credentials the project does not
+# have: EAS Build wants an Expo account, and a local build wants a ~10GB Android
+# SDK on the maintainer's machine. GitHub's runners already carry the SDK, and
+# Expo's Android template signs `assembleRelease` with the bundled debug
+# keystore — so the artifact is installable with no signing material and no
+# secrets anywhere in this file.
+#
+# That debug keystore is the important caveat, and it is stated plainly in the
+# release notes: these APKs are fine for sideloading and cannot be published to
+# Google Play, which requires an upload key only the maintainer should hold.
+name: Android APK
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      # llama.cpp is compiled from source through llama.rn, so the NDK has to be
+      # present before Gradle configures. Letting Gradle fetch it mid-build works
+      # but produces a far less legible failure when it does not.
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager --install "ndk;27.1.12297006" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      # Verify before spending twenty minutes on native compilation.
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Generate the native project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build release APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Locate the artifact
+        id: apk
+        run: |
+          path=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "Built $path ($(du -h "$path" | cut -f1))"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offlineai-android-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.path }}
+          fail_on_unmatched_files: true
